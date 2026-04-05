@@ -2,14 +2,17 @@ package com.back.global.rq;
 
 import com.back.domain.member.entity.Member;
 import com.back.domain.member.service.MemberService;
-import com.back.global.exception.ServiceException;
+import com.back.global.security.SecurityUser;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -19,48 +22,38 @@ public class Rq {
     private final HttpServletResponse response;
     private final MemberService memberService;
 
-    public void addCookie(String name, String value) {
-
-        Cookie cookie = new Cookie(name, value);
-        cookie.setPath("/");
-        cookie.setHttpOnly(true);
-        cookie.setDomain("localhost");
-
-        response.addCookie(
-                cookie
-        );
-    }
-
+    // 인증된 사용자 정보 확보
     public Member getActor() {
 
-        String authorizationHeader = request.getHeader("Authorization");
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        SecurityUser securityUser = (SecurityUser) authentication.getPrincipal();
 
-        String apiKey;
-        if (authorizationHeader != null) {
-            // 헤더 방식
-            if (!authorizationHeader.startsWith("Bearer ")) {
-                throw new ServiceException("401-2", "잘못된 형식의 인증데이터입니다.");
-            }
+        return new Member(securityUser.getId(), securityUser.getUsername(), securityUser.getNickname());
+    }
 
-            apiKey = authorizationHeader.replace("Bearer ", "");
-        } else {
-            // 쿠키 방식
-            apiKey = request.getCookies() == null ? ""
-                    : Arrays.stream(request.getCookies())
-                    .filter(cookie -> cookie.getName().equals("apiKey"))
-                    .map(Cookie::getValue)
-                    .findFirst()
-                    .orElse("");
+    public void setHeader(String name, String value) {
+        response.setHeader(name, value);
+    }
 
-        }
+    public String getHeader(String name, String defaultValue) {
+        return Optional
+                .ofNullable(request.getHeader(name))
+                .filter(headerValue -> !headerValue.isBlank())
+                .orElse(defaultValue);
+    }
 
-        if(apiKey.isBlank()) {
-            throw new ServiceException("401-3", "인증 정보가 존재하지 않습니다.");
-        }
-
-        return memberService.findByApiKey(apiKey).orElseThrow(
-                () -> new ServiceException("401-1", "유효하지 않은 API 키입니다.")
-        );
+    public String getCookieValue(String name, String defaultValue) {
+        return Optional
+                .ofNullable(request.getCookies())
+                .flatMap(
+                        cookies ->
+                                Arrays.stream(cookies)
+                                        .filter(cookie -> cookie.getName().equals(name))
+                                        .map(Cookie::getValue)
+                                        .filter(value -> !value.isBlank())
+                                        .findFirst()
+                )
+                .orElse(defaultValue);
     }
 
     public void deleteCookie(String name) {
@@ -71,5 +64,19 @@ public class Rq {
         cookie.setMaxAge(0);
 
         response.addCookie(cookie);
+    }
+
+    public void addCookie(String name, String value) {
+
+        Cookie cookie = new Cookie(name, value);
+        cookie.setPath("/");
+        cookie.setHttpOnly(true);
+        cookie.setDomain("localhost");
+        cookie.setSecure(true); // http X https O
+        cookie.setAttribute("SameSite", "strict");
+
+        response.addCookie(
+                cookie
+        );
     }
 }
